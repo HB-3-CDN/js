@@ -1,4 +1,4 @@
-/* Version: V_06_f - 03.06. 2026 - 09:54:46 */ var checkImGlobalScript = document.querySelector('#imGlobalScript') !== null; if(checkImGlobalScript){}else{ var imGlobalScript = document.createElement('script'); imGlobalScript.type = 'text/javascript'; imGlobalScript.id = 'imGlobalScript'; var imHbRandomParam = Math.floor(Math.random() * 10000) + 1; imGlobalScript.src = 'https://cdn.jsdelivr.net/gh/impression-media/js/imPrebidGlobalVariables3_aws.js?imHbRandomParam='+imHbRandomParam; document.getElementsByTagName('head')[0].appendChild(imGlobalScript);} 
+/* Version: V_06_f - 20.08. 2026 - 00:19:05 */ var checkImGlobalScript = document.querySelector('#imGlobalScript') !== null; if(checkImGlobalScript){}else{ var imGlobalScript = document.createElement('script'); imGlobalScript.type = 'text/javascript'; imGlobalScript.id = 'imGlobalScript'; var imHbRandomParam = Math.floor(Math.random() * 10000) + 1; imGlobalScript.src = 'https://cdn.jsdelivr.net/gh/impression-media/js/imPrebidGlobalVariables3_aws.js?imHbRandomParam='+imHbRandomParam; document.getElementsByTagName('head')[0].appendChild(imGlobalScript);} 
 /* installedModules: adform,appnexus,criteo,pubmatic,rtbhouse,rubicon,teads,ix,consentManagementGDPR,pubCommonIdSystem,criteoIdSystem,schain,sharedIdSystem*/
 /* prebid.js v6.5.0
 Updated : 2022-02-01*/
@@ -163,6 +163,9 @@ var iprimaParam = [];
 iprimaParam['async'] = [];
 iprimaParam['section'] = [];
 iprimaParam['async']['AdTrackInterScroller'] = 0;iprimaParam['async']['adform_square2'] = 0;iprimaParam['async']['leaderboard'] = 0;
+var seznamParam = [];
+seznamParam['async'] = [];
+seznamParam['async']['leaderboard'] = 0;
 pbjs = pbjs || {};
 pbjs.que = pbjs.que || [];
 var s12 = 'CP_r3oAP_r3oAAHABBENA3EgAAAAAAAAAAAAAAAAAADBIAMAAQUcHQAYAAgo4QgAwABBRwlABgACCjhSADAAEFHCwAGAAIKOAAAA.YAAAAAAAAAAA';
@@ -380,11 +383,265 @@ pbjs.onEvent('bidRequested', function(data){
 
 
 
+
+
+//(function () {
+    console.log('SEZNAM_ADAPTER init');
+    function seznamGetPvId(){
+        if(!window.seznamPvId){
+            window.seznamPvId = 'pv_' + Math.floor(Math.random() * 1000000000).toString(16) + Date.now().toString(16);
+        }
+        return window.seznamPvId;
+    }
+    function seznamGetSidCookie(){
+        try{
+            var seznamCookieParts = document.cookie.split(';');
+            for(var seznamCi = 0; seznamCi < seznamCookieParts.length; seznamCi++){
+                var seznamC = seznamCookieParts[seznamCi].replace(/^\s+/, '');
+                if(seznamC.indexOf('sid=') === 0){
+                    return decodeURIComponent(seznamC.substring(4));
+                }
+            }
+        }catch(e){}
+        return '';
+    }
+    var seznamAdapter = function seznamAdapter() {
+        return {
+            callBids: function (bidderRequest, addBidResponse, done) {
+
+                var hbQueryString = window.location.search;
+                hbUrlParams = new URLSearchParams(hbQueryString);
+                // testSeznam=1 v URL vynuti testovaci rezim (endpoint ?test=1) a zapne logovani,
+                // aniz by bylo nutne menit nastaveni v administraci.
+                var seznamForceTest = hbUrlParams.has('testSeznam') && hbUrlParams.get('testSeznam') === '1';
+                // Jednotny prepinac logovani: bud klasicky pbjs_debug, nebo nas testSeznam=1.
+                var seznamDebug = hbUrlParams.has('pbjs_debug') || seznamForceTest;
+                if(seznamDebug){
+                    console.log('SEZNAM_ADAPTER', bidderRequest);
+                    if(seznamForceTest){ console.log('SEZNAM_ADAPTER TEST MODE active (testSeznam=1) -> endpoint ?test=1'); }
+                }
+                let consent = '';
+                try{
+                    consent = bidderRequest.gdprConsent.consentString;
+                }catch(e){
+                    if(seznamDebug){
+                        console.log('SEZNAM_ADAPTER consent error', e);
+                    }
+                }
+                bidderRequest.bids.forEach(function (bidRequest) {
+                  if(bidRequest.bidder === 'seznam'){
+                    if(seznamDebug){
+                        console.log('SEZNAM_ADAPTER >> bidRequest.adUnitCode:', bidRequest.adUnitCode);
+                    }
+                    try{
+                        if(bidRequest.params && bidRequest.params.tagid){
+
+                            var seznamSizes = [];
+                            try{
+                                if(bidRequest.mediaTypes && bidRequest.mediaTypes.banner && bidRequest.mediaTypes.banner.sizes){
+                                    seznamSizes = bidRequest.mediaTypes.banner.sizes;
+                                }else if(bidRequest.sizes){
+                                    seznamSizes = bidRequest.sizes;
+                                }
+                            }catch(eSizes){
+                                seznamSizes = bidRequest.sizes || [];
+                            }
+                            var seznamFormat = [];
+                            for(var seznamFi = 0; seznamFi < seznamSizes.length; seznamFi++){
+                                if(seznamSizes[seznamFi] && seznamSizes[seznamFi].length === 2){
+                                    seznamFormat.push({ w: seznamSizes[seznamFi][0], h: seznamSizes[seznamFi][1] });
+                                }
+                            }
+
+                            var seznamImp = {
+                                id: 1,
+                                tagid: '' + bidRequest.params.tagid,
+                                banner: { format: seznamFormat }
+                            };
+                            if(typeof bidRequest.params.bidfloor !== 'undefined' && bidRequest.params.bidfloor !== ''){
+                                seznamImp.bidfloor = parseFloat(bidRequest.params.bidfloor);
+                                seznamImp.bidfloorcur = bidRequest.params.bidfloorcur || 'CZK';
+                            }
+
+                            var seznamUser = { buyeruid: seznamGetSidCookie() };
+                            if(consent){
+                                seznamUser.ext = { consent: consent };
+                            }
+
+                            // RTB identifikatory (eids) – posilame pouze ty, ktere uz pouzivame
+                            // a ktere Seznam SSP podporuje (id5-sync.com, criteo.com, adform.com,
+                            // pubmatic.com, xandr.com, czechadid.cz). Cteno z Prebid userIdAsEids,
+                            // ktere plni nakonfigurovane ID systemy (id5IdSystem, criteoIdSystem, ...).
+                            try{
+                                var seznamSupportedEidSources = ['czechadid.cz','id5-sync.com','adform.com','criteo.com','pubmatic.com','xandr.com'];
+                                var seznamSrcEids = bidRequest.userIdAsEids || (bidRequest.bids && bidRequest.bids.userIdAsEids) || [];
+                                var seznamEids = [];
+                                for(var seznamEi = 0; seznamEi < seznamSrcEids.length; seznamEi++){
+                                    var seznamEid = seznamSrcEids[seznamEi];
+                                    if(seznamEid && seznamSupportedEidSources.indexOf(seznamEid.source) !== -1
+                                       && seznamEid.uids && seznamEid.uids.length > 0){
+                                        var seznamUids = [];
+                                        for(var seznamUi = 0; seznamUi < seznamEid.uids.length; seznamUi++){
+                                            if(seznamEid.uids[seznamUi] && seznamEid.uids[seznamUi].id){
+                                                seznamUids.push({ id: '' + seznamEid.uids[seznamUi].id });
+                                            }
+                                        }
+                                        if(seznamUids.length > 0){
+                                            seznamEids.push({ source: seznamEid.source, uids: seznamUids });
+                                        }
+                                    }
+                                }
+                                if(seznamEids.length > 0){
+                                    seznamUser.eids = seznamEids;
+                                    if(seznamDebug){
+                                        console.log('SEZNAM_ADAPTER eids', seznamEids);
+                                    }
+                                }
+                            }catch(eEids){
+                                if(seznamDebug){
+                                    console.log('SEZNAM_ADAPTER eids error', eEids);
+                                }
+                            }
+
+                            var seznamReq = {
+                                id: bidRequest.bidId || ('' + Math.floor(Math.random() * 1000000000)),
+                                imp: [ seznamImp ],
+                                site: { page: window.location.href },
+                                user: seznamUser,
+                                ext: { pvId: seznamGetPvId() }
+                            };
+
+                            var seznamTest = '';
+                            if(bidRequest.params.test || seznamForceTest){ seznamTest = '?test=1'; }
+                            var seznamUrl = (bidRequest.params.endpoint || 'https://ssp.seznam.cz/v1/rtb') + seznamTest;
+
+                            if(seznamDebug){
+                                console.log('SEZNAM_ADAPTER tagid', seznamImp.tagid, 'url', seznamUrl);
+                                console.log('SEZNAM_ADAPTER request', seznamReq);
+                            }
+
+                            var seznamAsync = seznamParam['async'][bidRequest.adUnitCode];
+
+                            // Prevod ciselneho no-bid duvodu (OpenRTB NBR) na citelny text.
+                            var seznamNbrText = function(nbr){
+                                var map = {
+                                    0: 'Unknown error',
+                                    1: 'Technical error',
+                                    2: 'Invalid request (napr. zona neni nakonfigurovana pro OpenRTB)',
+                                    3: 'Known web spider',
+                                    4: 'Suspected non-human traffic',
+                                    5: 'Cloud/Data center/Proxy IP',
+                                    6: 'Unsupported device',
+                                    7: 'Blocked publisher or site',
+                                    8: 'Unmatched user'
+                                };
+                                return (typeof map[nbr] !== 'undefined') ? map[nbr] : 'Nedefinovany kod';
+                            };
+                            var seznamHandle = function(answer, status){
+                                if(seznamDebug){
+                                    console.log('SEZNAM_ADAPTER >> tagid', seznamImp.tagid, 'response status', status, answer);
+                                }
+                                // 204 (nebo prazdne telo) = legitimni NO-BID, nikoli chyba:
+                                // SSP nema momentalne vhodnou reklamu pro danou pozici/uzivatele.
+                                if(status === 204 || !answer){
+                                    console.warn('SEZNAM_ADAPTER NO-BID (204 / prazdna odpoved) tagid ' + seznamImp.tagid
+                                        + ' | SSP nema vhodnou reklamu (casto chybejici/neplatny TCF consent nebo neshoda uzivatele). test=1 negarantuje nabidku.');
+                                    return;
+                                }
+                                if(status !== 200){
+                                    console.warn('SEZNAM_ADAPTER HTTP chyba status ' + status + ' tagid ' + seznamImp.tagid);
+                                    return;
+                                }
+                                var seznamData = JSON.parse(answer);
+                                // Vyhodnoceni no-bid duvodu (nbr) – nejcastejsi pricina chybejici nabidky.
+                                if(seznamData && typeof seznamData.nbr !== 'undefined'){
+                                    var seznamNbrMsg = '';
+                                    try{ seznamNbrMsg = (seznamData.ext && seznamData.ext.nbrMessage) ? seznamData.ext.nbrMessage : ''; }catch(eMsg){}
+                                    console.warn('SEZNAM_ADAPTER NO-BID tagid ' + seznamImp.tagid
+                                        + ' | nbr=' + seznamData.nbr + ' (' + seznamNbrText(seznamData.nbr) + ')'
+                                        + (seznamNbrMsg ? ' | zprava: ' + seznamNbrMsg : ''));
+                                    return;
+                                }
+                                if(seznamData && seznamData.seatbid && seznamData.seatbid.length > 0
+                                   && seznamData.seatbid[0].bid && seznamData.seatbid[0].bid.length > 0){
+                                    var seznamWin = seznamData.seatbid[0].bid[0];
+                                    if(seznamWin.price > 0 && seznamWin.adm){
+                                        var bid = window.pbjs.createBid(1, bidRequest);
+                                        bid.requestId = bidRequest.bidId;
+                                        bid.auctionId = bidRequest.auctionId;
+                                        bid.adUnitCode = bidRequest.adUnitCode;
+                                        bid.bidderCode = bidRequest.bidder;
+                                        bid.cpm = seznamWin.price;
+                                        bid.currency = seznamData.cur || 'CZK';
+                                        bid.width = seznamWin.w;
+                                        bid.height = seznamWin.h;
+                                        bid.ttl = seznamWin.exp ? seznamWin.exp : 360;
+                                        bid.netRevenue = false;
+                                        bid.creativeId = seznamWin.id || '1';
+                                        bid.ad = seznamWin.adm;
+                                        if(seznamDebug){
+                                            console.log('SEZNAM_ADAPTER BID tagid ' + seznamImp.tagid + ' | cpm ' + bid.cpm + ' ' + bid.currency + ' | ' + bid.width + 'x' + bid.height);
+                                        }
+                                        addBidResponse(bidRequest.adUnitCode, bid);
+                                    }else{
+                                        if(seznamDebug){
+                                            console.log('SEZNAM_ADAPTER no usable bid (chybi price/adm) pro tagid', seznamImp.tagid);
+                                        }
+                                    }
+                                }else{
+                                    if(seznamDebug){
+                                        console.log('SEZNAM_ADAPTER empty seatbid / no-bid pro tagid', seznamImp.tagid);
+                                    }
+                                }
+                            };
+
+                            var seznamXhr = new XMLHttpRequest();
+                            seznamXhr.open('POST', seznamUrl, seznamAsync ? true : false);
+                            seznamXhr.setRequestHeader('Content-Type', 'application/json');
+                            if(seznamAsync){
+                                seznamXhr.onreadystatechange = function(){
+                                    if(seznamXhr.readyState === 4){
+                                        try{ seznamHandle(seznamXhr.responseText, seznamXhr.status); }
+                                        catch(eResp){ if(seznamDebug){ console.log('SEZNAM_ADAPTER parse error', eResp); } }
+                                    }
+                                };
+                                seznamXhr.send(JSON.stringify(seznamReq));
+                            }else{
+                                seznamXhr.send(JSON.stringify(seznamReq));
+                                try{ seznamHandle(seznamXhr.responseText, seznamXhr.status); }
+                                catch(eResp){ if(seznamDebug){ console.log('SEZNAM_ADAPTER parse error', eResp); } }
+                            }
+                        }else{
+                            if(seznamDebug){
+                                console.log('SEZNAM_ADAPTER missing params.tagid', bidRequest.params);
+                            }
+                        }
+                    }catch(e){
+                        if(seznamDebug){
+                            console.log('SEZNAM_ADAPTER error', e);
+                        }
+                    }
+                  }else{
+                     if(seznamDebug){
+                         console.log('SEZNAM_ADAPTER bidRequest.bidder else:: ', bidRequest.bidder);
+                     }
+                  }
+                });
+                done();
+            }
+        };
+    };
+    pbjs.registerBidAdapter(seznamAdapter, 'seznam');
+//})();
+
+
+
+
 var imHbWonBids = imHbWonBids || [];
 var imHbAsocPlacementMidEnable = imHbAsocPlacementMidEnable || [];
 var imHbPlacementEnable = imHbPlacementEnable || [];
 
-            function imGetCookie(name) {var v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)'); return v ? v[2] : null;}; function imSetCookie(name,value,days){var d=new Date;d.setTime(d.getTime()+24*60*60*1000*days);document.cookie=name+'='+value+';domain=.off;path=/;expires='+d.toGMTString();};function imTestingParam(t){var n=null,e=[];return location.search.substr(1).split('&').forEach(function(o){(e=o.split('='))[0]===t&&(n=decodeURIComponent(e[1]))}),n};var imtesting = imTestingParam('imtesting');if(imtesting=='start'){imSetCookie('imtesting','dev',1);}if(imtesting=='stop'){imSetCookie('imtesting', '', -1);}function imRemoveTestInfo(){document.getElementById('imtestingInfo').remove();}function imHbUploadConfig(){if(imGetCookie('imtesting')){document.getElementById('imtestingInfo')&&document.getElementById('imtestingInfo').remove();var infoImTesting=document.createElement('div');infoImTesting.id='imtestingInfo',infoImTesting.innerHTML='<a href="https://iprima-hb.impressionmedia.cz/administrace/pages/weby.php?openId=0" style="text-derocation:none; color:white;">TESTING MODE</a><span onclick="imRemoveTestInfo();" style="cursor: pointer;border: 1px solid white;border-radius: 20px 2px 2px;padding: 4px 6px 1px 10px;position: absolute; bottom: 2px;right: 2px;">X</span>',infoImTesting.style.cssText="font-size:12px;line-height:18px;z-index:999999;position:fixed;bottom:3px;right:3px;margin-top:-30px;padding:65px 15px 50px 45px;background:#0000003d;color:white;border-radius:3px;border-top-left-radius:200px;border:1px solid white;box-shadow:1px 1px 1px black;",document.body.appendChild(infoImTesting);;var imConfigId = '0'; var imConfigName = 'HBsetup_off'}else{var imConfigId = '10004'; var imConfigName = 'HBsetup_wwwmeteocentrumcz_Meteocentrum_cz__od_19_11_2_25____SAS_prebid___aws_2026_06_03_0954'};var imHbScript = document.createElement('script');imHbScript.type = 'text/javascript';imHbScript.id = 'imHbConfig';var imHbRandomParam = Math.floor(Math.random() * 10000) + 1;imHbScript.src = 'https://cdn.jsdelivr.net/gh/HB-3-CDN/js/tmp/js/'+imConfigId+'/'+imConfigName+'.min.js?imHbRandomParam='+imHbRandomParam;document.getElementsByTagName('head')[0].appendChild(imHbScript);}
+            function imGetCookie(name) {var v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)'); return v ? v[2] : null;}; function imSetCookie(name,value,days){var d=new Date;d.setTime(d.getTime()+24*60*60*1000*days);document.cookie=name+'='+value+';domain=.off;path=/;expires='+d.toGMTString();};function imTestingParam(t){var n=null,e=[];return location.search.substr(1).split('&').forEach(function(o){(e=o.split('='))[0]===t&&(n=decodeURIComponent(e[1]))}),n};var imtesting = imTestingParam('imtesting');if(imtesting=='start'){imSetCookie('imtesting','dev',1);}if(imtesting=='stop'){imSetCookie('imtesting', '', -1);}function imRemoveTestInfo(){document.getElementById('imtestingInfo').remove();}function imHbUploadConfig(){if(imGetCookie('imtesting')){document.getElementById('imtestingInfo')&&document.getElementById('imtestingInfo').remove();var infoImTesting=document.createElement('div');infoImTesting.id='imtestingInfo',infoImTesting.innerHTML='<a href="https://iprima-hb.impressionmedia.cz/administrace/pages/weby.php?openId=0" style="text-derocation:none; color:white;">TESTING MODE</a><span onclick="imRemoveTestInfo();" style="cursor: pointer;border: 1px solid white;border-radius: 20px 2px 2px;padding: 4px 6px 1px 10px;position: absolute; bottom: 2px;right: 2px;">X</span>',infoImTesting.style.cssText="font-size:12px;line-height:18px;z-index:999999;position:fixed;bottom:3px;right:3px;margin-top:-30px;padding:65px 15px 50px 45px;background:#0000003d;color:white;border-radius:3px;border-top-left-radius:200px;border:1px solid white;box-shadow:1px 1px 1px black;",document.body.appendChild(infoImTesting);;var imConfigId = '0'; var imConfigName = 'HBsetup_off'}else{var imConfigId = '10004'; var imConfigName = 'HBsetup_wwwmeteocentrumcz_Meteocentrum_cz__od_19_11_2_25____SAS_prebid___aws_2026_08_20_0019'};var imHbScript = document.createElement('script');imHbScript.type = 'text/javascript';imHbScript.id = 'imHbConfig';var imHbRandomParam = Math.floor(Math.random() * 10000) + 1;imHbScript.src = 'https://cdn.jsdelivr.net/gh/HB-3-CDN/js/tmp/js/'+imConfigId+'/'+imConfigName+'.min.js?imHbRandomParam='+imHbRandomParam;document.getElementsByTagName('head')[0].appendChild(imHbScript);}
     //posledni cyklus nepromazavat    
     var selection = document.body.getAttribute('data-hbmasterscript') !== null;
     if (selection) {       
@@ -458,7 +715,7 @@ var imHbPlacementEnable = imHbPlacementEnable || [];
     }
         
     
-    var selection = document.body.getAttribute('data-hbmasterscript') !== null;
+    var selection = !!document.body && document.body.getAttribute('data-hbmasterscript') !== null;
     if (selection) {       
         hbmasterscript = document.body.getAttribute('data-hbmasterscript'); 
         var hbMasterDigit = parseInt(hbmasterscript.replace('hb-', ''),10);
